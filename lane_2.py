@@ -69,7 +69,7 @@ histogram = np.sum(transformed_image[transformed_image.shape[0]//2:,:], axis=0)
 # get a list of pixels that are in each histogram spike
 lanes = []
 
-# when the histogram is grater than 0 set the new histogram value to 1
+# when the histogram is greater than 0 set the new histogram value to 1
 # otherwise set it to 0
 hist_threshold = []
 for i in range(len(histogram)):
