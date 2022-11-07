@@ -27,7 +27,7 @@ Mid_Redux = 15
 
 - `Sat_Thresh` is the threshold for the minimum saturation of the image. This is used to detect the white lines on the road.
 - `Angle_Increment` is the increment of the angle used in the ray casting algorithm.
-- `Mid_Redux` is the reduction from the horixontal middle of the ROI, this can be modified to remove less of the environment. $ \frac{1}{Mid\_Redux} $
+- `Mid_Redux` is the reduction from the horixontal middle of the ROI, this can be modified to remove less of the environment. $\frac{1}{Mid\_Redux}$
 
 ## Lane Detection Pipeline
 
@@ -70,12 +70,12 @@ Variables:
 - $L$ is the length of the ray
 
 The final point of the ray is calculated by:
-$$ M_x = O_x + \frac{w}{2} \cos(a) $$
-$$ M_y = O_y - \frac{h}{2} \sin(a) $$
+$$M_x = O_x + \frac{w}{2} \cos(a)$$
+$$M_y = O_y - \frac{h}{2} \sin(a)$$
 
 The point at any given length $L$ is calculated by:
-$$ P_x = O_x + L \cos(a) $$
-$$ P_y = O_y - L \sin(a) $$
+$$P_x = O_x + L \cos(a)$$
+$$P_y = O_y - L \sin(a)$$
 
 Using the above equations we can calculate the pixel at any given length $L$, for any given angle $a$ and use this to get the first white pixel.
 
