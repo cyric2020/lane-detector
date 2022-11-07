@@ -3,114 +3,240 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import image_cleaner
+import configparser
+import os
+import threading
+import time
 
-# image = cv2.imread('image_test.jpg')
-image = cv2.imread('test_image.jpg')
+config = configparser.ConfigParser()
+config.read('config.ini')
 
-# STEP 1: CONVERT TO GRAYSCALE
-lane_image = np.copy(image)
-gray = cv2.cvtColor(lane_image, cv2.COLOR_RGB2GRAY)
+def start_convert(image, save=False, frame_number=0):
+    # STEP 1: CONVERT TO GRAYSCALE
+    if frame_number > 0:
+        print('Processing frame: {}'.format(frame_number))
 
-# STEP 2: APPLY GAUSSIAN BLUR
-blur = cv2.GaussianBlur(gray, (5,5), 0)
+    lane_image = np.copy(image)
 
-# STEP 3: APPLY CANNY EDGE DETECTION
-canny = cv2.Canny(blur, 50, 150)
+    hls = cv2.cvtColor(lane_image, cv2.COLOR_RGB2HLS)
 
-# cv2.imshow('result', canny)
-# cv2.waitKey(0)
+    sat_thres = int(config['CLEANING']['Sat_Thresh'])
+    sat = hls[:,:,2]
+    sat_bin = np.zeros_like(sat)
+    sat_bin[(sat > sat_thres)] = 1
 
-# STEP 4: APPLY REGION OF INTEREST
-height = canny.shape[0]
-width = canny.shape[1]
+    sat_bin = image_cleaner.clean(sat_bin)
 
-print(width, height)
-# region_of_interest_vertices = [
-#     (0, height),
-#     (width, int(height/2)),
-#     (width, height)
-# ]
+    warped = image_cleaner.primary_crop(sat_bin)
+    pers_mat = image_cleaner.get_pers_mat(sat_bin)
 
-# make region_of_interest_verticies a rectangle
-region_of_interest_vertices = [
-    (0, height),
-    # (int(4*width/5), int(height/5)),
-    (int(width/2), 0),
-    (width, 0),
-    (width, height)
-]
+    def calculate_histogram(img):
+        # calculate the histogram for the bottom half of the image
+        bottom_half = img[img.shape[0]//2:,:]
 
-# outline the region of interest in blue
-# cv2.line(lane_image, region_of_interest_vertices[0], region_of_interest_vertices[1], (255,0,0), 3)
-# cv2.line(lane_image, region_of_interest_vertices[1], region_of_interest_vertices[2], (255,0,0), 3)
-# cv2.line(lane_image, region_of_interest_vertices[2], region_of_interest_vertices[0], (255,0,0), 3)
+        # calculate the histogram for the top half of the image
+        top_half = img[:img.shape[0]//2,:]
 
-# cv2.imshow('result', lane_image)
-# cv2.waitKey(0)
+        # combine the two halves
+        histogram = np.sum(bottom_half, axis=0) + np.sum(top_half, axis=0)
 
-# STEP 5: APPLY HOUGH TRANSFORM
-def region_of_interest(img, vertices):
-    mask = np.zeros_like(img)
-    match_mask_color = 255
-    cv2.fillPoly(mask, vertices, match_mask_color)
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
+        return histogram
 
-cropped_image = region_of_interest(canny, np.array([region_of_interest_vertices], np.int32))
+    histogram = calculate_histogram(warped)
 
-# cv2.imshow('result', cropped_image)
-# cv2.waitKey(0)
+    # get a list of pixels that are in each histogram spike
+    lanes = []
 
-blur_cropped = cv2.GaussianBlur(cropped_image, (15,15), 0)
-# cv2.imshow('result', blur_cropped)
-# cv2.waitKey(0)
+    # when the histogram is greater than 0 set the new histogram value to 1
+    # otherwise set it to 0
+    hist_threshold = []
+    for i in range(len(histogram)):
+        if histogram[i] > 0:
+            hist_threshold.append(1)
+        else:
+            hist_threshold.append(0)
+    
+    # find the start and end of each spike
+    start = 0
+    end = 0
+    for i in range(len(hist_threshold)):
+        if len(lanes) >= 1:
+            if lanes[-1][1] >= i:
+                continue
+        if hist_threshold[i] == 1:
+            start = i
+            for j in range(i, len(hist_threshold)):
+                if hist_threshold[j] == 0 or j == len(hist_threshold) - 1:
+                    end = j
+                    break
+            lanes.append((start, end))
 
-# sharpen the image to make the lines more visible
-thresh_cropped = cv2.threshold(blur_cropped, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-# cv2.imshow('result', thresh_cropped)
-# cv2.waitKey(0)
+    min_lane_gap = 100
 
-# get the number of white pixels per line
-for i in range(0, len(thresh_cropped)):
-    pixels = np.sum(thresh_cropped[i])
+    # if 2 spikes are within min_lane_gap pixels of each other, combine them
+    i = 0
+    while i < len(lanes) - 1:
+        if i == len(lanes) - 1:
+            break
+        if lanes[i][1] + min_lane_gap >= lanes[i+1][0]:
+            lanes[i] = (lanes[i][0], lanes[i+1][1])
+            lanes.pop(i+1)
+            i -= 1
+        i += 1
 
-    if pixels > 18000:
-        # set the line to red
-        for j in range(0, len(thresh_cropped[i])):
-            thresh_cropped[i][j] = 0
+    for lane in lanes:
+        width = lane[1] - lane[0]
+        area = 0
+        for i in range(lane[0], lane[1]):
+            area += histogram[i]
+        # print(area)
 
-# cv2.imshow('result', thresh_cropped)
-# cv2.waitKey(0)
+        if area < 100:
+            lanes.remove(lane)
+    # print(lanes)
 
-lines_tmp = cv2.HoughLinesP(thresh_cropped, rho=6, theta=np.pi/60, threshold=150, lines=np.array([]), minLineLength=20, maxLineGap=25)
-# lines = lines_tmp
-lines = []
+    # get the center of each lane
+    lane_centers = []
+    for lane in lanes:
+        lane_centers_pixels = []
+        # loop through each line in the transformed_image and find the center pixel that is white in the lane bounds
+        for i in range(sat_bin.shape[0]):
+            white_pixels = []
+            for j in range(lane[0], lane[1]):
+                if warped[i][j] == 1:
+                    white_pixels.append(j)
+            if len(white_pixels) > 0:
+                mid = white_pixels[len(white_pixels)//2]
+                lane_centers_pixels.append((i, mid))
+        lane_centers.append(lane_centers_pixels)
 
-# loop through all the lines and if the color behind the line is +- 10% of the color of white, then draw the line
-percent = 0.5
-for line in lines_tmp:
-    for x1, y1, x2, y2 in line:
-        color = lane_image[int((y1+y2)/2)][int((x1+x2)/2)]
-        if (color[0] > 255*(1-percent) and color[1] > 255*(1-percent) and color[2] > 255*(1-percent)):
-            print("white")
-            lines.append(line)
+    # find the line of best fit for each lane
+    lane_lines = []
+    for lane in lane_centers:
+        x = []
+        y = []
+        for point in lane:
+            x.append(point[0])
+            y.append(point[1])
+        lane_lines.append(np.polyfit(x, y, 2))
 
-print(len(lines))
+    # plot the lane lines on the image
+    # for lane in lane_lines:
+    #     y = np.linspace(0, sat_bin.shape[0]-1, sat_bin.shape[0])
 
-# STEP 6: DRAW LINES ON THE IMAGE
-def draw_the_lines(img, lines):
-    img = np.copy(img)
-    blank_image = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
+    #     x = np.polyval(lane, y)
+    #     plt.plot(x, y, color='red')
 
-    for line in lines:
-        for x1, y1, x2, y2 in line:
-            cv2.line(blank_image, (x1,y1), (x2,y2), (0,255,0), thickness=3)
+    # plt.imshow(warped, cmap='gray')
+    # plt.show()
 
-    img = cv2.addWeighted(img, 0.8, blank_image, 1, 0.0)
-    return img
+    # now overlay the lane lines on the original image
+    # reverse the effect of the perspective warp on the points
+    # then draw the lines on the original image
+    all_points_lanes = []
+    for lane in lane_lines:
+        y = np.linspace(0, sat_bin.shape[0]-1, sat_bin.shape[0])
 
-image_with_lines = draw_the_lines(lane_image, lines)
+        x = np.polyval(lane, y)
 
-# STEP 7: DISPLAY THE IMAGE
-# cv2.imshow('result', image_with_lines)
-# cv2.waitKey(0)
+        # reverse the perspective warp
+        points = np.array([np.transpose(np.vstack([x, y]))])
+        points = cv2.perspectiveTransform(points, np.linalg.inv(pers_mat))
+        points = np.int32(points)
+
+        all_points_lanes.append(points)
+
+    all_points = []
+
+    for a in range(len(all_points_lanes)):
+        if a == 0:
+            for b in all_points_lanes[a].tolist()[0]:
+                all_points.append(b)
+        else:
+            for b in all_points_lanes[a].tolist()[0][::-1]:
+                all_points.append(b)
+
+    cv2.fillPoly(lane_image, np.array([all_points], np.int32), (0, 255, 0))
+
+    # make the fill 50% transparent
+    lane_image = cv2.addWeighted(lane_image, 0.5, image, 0.5, 0)
+
+    # draw the lines in blue
+    for lane in all_points_lanes:
+        cv2.polylines(lane_image, lane, False, (255, 0, 0), 2)
+
+
+    # rgb_lane_image = cv2.cvtColor(lane_image, cv2.COLOR_BGR2RGB)
+
+    # plt.imshow(lane_image)
+    # plt.show()
+
+    # save the image
+    if save:
+        # convert the image to a format that can be saved
+        cv2.imwrite('output/lane_image_{}.png'.format(str(frame_number)), lane_image)
+
+# plt.show()
+
+image = cv2.imread('input.jpg')
+
+# test the image at all different resolutions
+for i in range(1, 5):
+    image = cv2.resize(image, (image.shape[1]//i, image.shape[0]//i))
+    start = time.process_time()
+    start_convert(image, False, 0)
+    end = time.process_time()
+    print('resolution: {}x{}'.format(image.shape[1], image.shape[0]))
+    print('time: {} seconds'.format(end - start))
+    print('---------------------')
+
+# start_convert(image, True, 1)
+
+exit()
+
+cap = cv2.VideoCapture('input.mp4')
+i = 0
+
+max_threads = 100
+threads = []
+
+# while i < 1:
+height = 300
+while(cap.isOpened()):
+    if len(threads) < max_threads:
+        ret, frame = cap.read()
+        if ret == True:
+            print(i)
+            
+            height_diff = frame.shape[0]/height
+            width = int(frame.shape[1]/height_diff)
+            frame = cv2.resize(frame, (width, height))
+
+            t = threading.Thread(target=start_convert, args=(frame, True, i,))
+            t.start()
+            threads.append(t)
+
+            i += 1
+        else:
+            break
+    else:
+        for t in threads:
+            t.join()
+            if not t.is_alive():
+                threads.remove(t)
+
+
+    # ret, frame = cap.read()
+    # print(i)
+
+    # height = 300
+    # # height = 500
+    # height_diff = frame.shape[0]/height
+    # width = int(frame.shape[1]/height_diff)
+    # frame = cv2.resize(frame, (width, height))
+
+    # start_convert(frame, True, i)
+    # # start_convert(frame)
+    # plt.pause(0.02)
+    # i+= 1

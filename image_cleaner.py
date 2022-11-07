@@ -79,7 +79,7 @@ def angle_clean(image, incriment, draw=False):
     return distances, angles, ray_image
 
 def center_clean(image, incriment, draw=False):
-    lane_origin = (image.shape[1]//2, image.shape[0]/4)
+    lane_origin = (image.shape[1]//2, image.shape[0]-image.shape[0]//4)
 
     ray_image = np.zeros_like(image)
 
@@ -102,7 +102,7 @@ def center_clean(image, incriment, draw=False):
                 if image[y, x] == 1:
                     ray_image[y, x] = 1
                     if draw == True:
-                        cv2.line(ray_image, lane_origin, (x, y-1), (255, 0, 0), 1)
+                        cv2.line(ray_image, lane_origin, (x, y), (255, 0, 0), 1)
                     distances.append(i)
                     break
             except:
@@ -137,9 +137,6 @@ def clean(image):
     distances, angles, ray_image = angle_clean(image, 0.1, False)
 
     distances, angles, ray_image = center_clean(ray_image, 0.1, False)
-
-    # plt.imshow(ray_image, cmap='gray')
-    # plt.show()
 
     return ray_image
 
