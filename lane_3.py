@@ -4,32 +4,35 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import image_cleaner
+import configparser
+import os
+import threading
+import time
 
-def start_convert(image):
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+def start_convert(image, save=False, frame_number=0):
     # STEP 1: CONVERT TO GRAYSCALE
+    if frame_number > 0:
+        print('Processing frame: {}'.format(frame_number))
+
     lane_image = np.copy(image)
 
     hls = cv2.cvtColor(lane_image, cv2.COLOR_RGB2HLS)
 
-    sat_thres = 80
+    sat_thres = int(config['CLEANING']['Sat_Thresh'])
     sat = hls[:,:,2]
     sat_bin = np.zeros_like(sat)
     sat_bin[(sat > sat_thres)] = 1
 
-    # plt.subplot(1, 2, 1)
-    # plt.imshow(sat_bin, cmap='gray')
-
     sat_bin = image_cleaner.clean(sat_bin)
-
-    # plt.subplot(1, 2, 2)
-    # plt.imshow(sat_bin, cmap='gray')
-    # plt.show()
 
     warped = image_cleaner.primary_crop(sat_bin)
     pers_mat = image_cleaner.get_pers_mat(sat_bin)
 
-    # plt.imshow(warped, cmap='gray')
-    # plt.show()
+    # draw the perspective
+    # cv2.polylines(lane_image, np.int32([image_cleaner.get_perspective(lane_image)]), True, (0, 0, 255), 2)
 
     def calculate_histogram(img):
         # calculate the histogram for the bottom half of the image
@@ -45,15 +48,6 @@ def start_convert(image):
 
     histogram = calculate_histogram(warped)
 
-    # plot image and histogram side-by-side
-    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18,8))
-    # ax1.imshow(warped, cmap='gray')
-    # ax1.set_title('Warped Image')
-    # ax2.plot(histogram)
-    # ax2.set_title('Histogram')
-
-    # plt.show()
-
     # get a list of pixels that are in each histogram spike
     lanes = []
 
@@ -65,10 +59,7 @@ def start_convert(image):
             hist_threshold.append(1)
         else:
             hist_threshold.append(0)
-
-    # plt.plot(hist_threshold)
-    # plt.show()
-
+    
     # find the start and end of each spike
     start = 0
     end = 0
@@ -119,10 +110,7 @@ def start_convert(image):
                 if warped[i][j] == 1:
                     white_pixels.append(j)
             if len(white_pixels) > 0:
-                # mid = int(sum(white_pixels)/len(white_pixels))
                 mid = white_pixels[len(white_pixels)//2]
-                # mid = white_pixels[0]
-                # lane_centers_pixels.append((sat_bin.shape[0]-i, mid))
                 lane_centers_pixels.append((i, mid))
         lane_centers.append(lane_centers_pixels)
 
@@ -143,9 +131,6 @@ def start_convert(image):
         x = np.polyval(lane, y)
         # plt.plot(x, y, color='red')
 
-    # plt.imshow(warped, cmap='gray')
-    # plt.show()
-
     # now overlay the lane lines on the original image
     # reverse the effect of the perspective warp on the points
     # then draw the lines on the original image
@@ -160,8 +145,6 @@ def start_convert(image):
         points = cv2.perspectiveTransform(points, np.linalg.inv(pers_mat))
         points = np.int32(points)
 
-        # for point in points[0]:
-            # all_points_lanes.append(point)
         all_points_lanes.append(points)
 
     all_points = []
@@ -174,8 +157,6 @@ def start_convert(image):
             for b in all_points_lanes[a].tolist()[0][::-1]:
                 all_points.append(b)
 
-    # print(all_points)
-
     cv2.fillPoly(lane_image, np.array([all_points], np.int32), (0, 255, 0))
 
     # make the fill 50% transparent
@@ -186,29 +167,60 @@ def start_convert(image):
         cv2.polylines(lane_image, lane, False, (255, 0, 0), 2)
 
 
-    rgb_lane_image = cv2.cvtColor(lane_image, cv2.COLOR_BGR2RGB)
+    # rgb_lane_image = cv2.cvtColor(lane_image, cv2.COLOR_BGR2RGB)
 
-    plt.imshow(rgb_lane_image)
-    plt.show()
+    # plt.imshow(lane_image)
+    # plt.show()
 
-# image = cv2.imread('lane.jpg')
-# start_convert(image)
+    # save the image
+    if save:
+        # convert the image to a format that can be saved
+        cv2.imwrite('output/lane_image_{}.png'.format(str(frame_number)), lane_image)
 
-plt.show()
+# plt.show()
 
-cap = cv2.VideoCapture('inhigh.mp4')
+cap = cv2.VideoCapture('input.mp4')
 i = 0
-# while(cap.isOpened()):
-while i < 1:
-    ret, frame = cap.read()
-    print(i)
+
+max_threads = 100
+threads = []
+
+# while i < 1:
+height = 300
+while(cap.isOpened()):
+    if len(threads) < max_threads:
+        ret, frame = cap.read()
+        if ret == True:
+            print(i)
+            
+            height_diff = frame.shape[0]/height
+            width = int(frame.shape[1]/height_diff)
+            frame = cv2.resize(frame, (width, height))
+
+            t = threading.Thread(target=start_convert, args=(frame, True, i,))
+            t.start()
+            threads.append(t)
+
+            i += 1
+        else:
+            break
+    else:
+        for t in threads:
+            t.join()
+            if not t.is_alive():
+                threads.remove(t)
+
+
+    # ret, frame = cap.read()
+    # print(i)
 
     # height = 300
-    height = 500
-    height_diff = frame.shape[0]/height
-    width = int(frame.shape[1]/height_diff)
-    frame = cv2.resize(frame, (width, height))
+    # # height = 500
+    # height_diff = frame.shape[0]/height
+    # width = int(frame.shape[1]/height_diff)
+    # frame = cv2.resize(frame, (width, height))
 
-    start_convert(frame)
-    plt.pause(0.02)
-    i+= 1
+    # start_convert(frame, True, i)
+    # # start_convert(frame)
+    # plt.pause(0.02)
+    # i+= 1

@@ -2,18 +2,10 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import datetime
+import configparser
 
-# image = cv2.imread('lane.jpg')
-
-# STEP 1: CONVERT TO GRAYSCALE
-# lane_image = np.copy(image)
-
-# hls = cv2.cvtColor(lane_image, cv2.COLOR_RGB2HLS)
-
-# sat_thres = 80
-# sat = hls[:,:,2]
-# sat_bin = np.zeros_like(sat)
-# sat_bin[(sat > sat_thres)] = 1
+config = configparser.ConfigParser()
+config.read('config.ini')
 
 def average_white(image):
     # draw the mean position of the pixels
@@ -24,10 +16,13 @@ def average_white(image):
     return image
 
 def get_perspective(image):
+
+    # use the config from lane_3
+    
     return [
         (0, image.shape[0]),
-        (int(2*image.shape[1]/5), int(image.shape[0]/2 + image.shape[0]/15)),
-        (int(image.shape[1]-2*image.shape[1]/5), int(image.shape[0]/2 + image.shape[0]/15)),
+        (int(2*image.shape[1]/5), int(image.shape[0]/2 + image.shape[0]/int(config['CLEANING']['Mid_Redux']))),
+        (int(image.shape[1]-2*image.shape[1]/5), int(image.shape[0]/2 + image.shape[0]/int(config['CLEANING']['Mid_Redux']))),
         (image.shape[1], image.shape[0])
     ]
 
@@ -38,14 +33,7 @@ def get_pers_mat(image):
     return pers_mat
 
 def primary_crop(image):
-    # perspective = [
-    #     (0, image.shape[0]),
-    #     (image.shape[1]/4, image.shape[0]/2),
-    #     (image.shape[1]-image.shape[1]/4, image.shape[0]/2),
-    #     (image.shape[1], image.shape[0])
-    # ]
     # crop the image to the perspective
-    # pers_mat = cv2.getPerspectiveTransform(np.float32(perspective), np.float32([[0, image.shape[0]], [0, 0], [image.shape[1], 0], [image.shape[1], image.shape[0]]]))
     pers_mat = get_pers_mat(image)
     warped = cv2.warpPerspective(image, pers_mat, (image.shape[1], image.shape[0]))
 
@@ -86,12 +74,12 @@ def angle_clean(image, incriment, draw=False):
             distances.append(distances[-1])
 
         # increment the angle
-        angle += incriment
+        angle += float(config['CLEANING']['Angle_Increment'])
     
     return distances, angles, ray_image
 
 def center_clean(image, incriment, draw=False):
-    lane_origin = (image.shape[1]//2, image.shape[0]//2)
+    lane_origin = (image.shape[1]//2, image.shape[0]/4)
 
     ray_image = np.zeros_like(image)
 
@@ -128,7 +116,7 @@ def center_clean(image, incriment, draw=False):
             distances.append(distances[-1])
 
         # increment the angle
-        angle += incriment
+        angle += float(config['CLEANING']['Angle_Increment'])
     
     return distances, angles, ray_image
 
