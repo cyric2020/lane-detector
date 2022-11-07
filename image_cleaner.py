@@ -1,21 +1,19 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import datetime
 
-image = cv2.imread('lane.jpg')
+# image = cv2.imread('lane.jpg')
 
 # STEP 1: CONVERT TO GRAYSCALE
-lane_image = np.copy(image)
+# lane_image = np.copy(image)
 
-hls = cv2.cvtColor(lane_image, cv2.COLOR_RGB2HLS)
+# hls = cv2.cvtColor(lane_image, cv2.COLOR_RGB2HLS)
 
-sat_thres = 80
-sat = hls[:,:,2]
-sat_bin = np.zeros_like(sat)
-sat_bin[(sat > sat_thres)] = 1
-
-# for temp video converting
-out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (sat_bin.shape[1], sat_bin.shape[0]))
+# sat_thres = 80
+# sat = hls[:,:,2]
+# sat_bin = np.zeros_like(sat)
+# sat_bin[(sat > sat_thres)] = 1
 
 def average_white(image):
     # draw the mean position of the pixels
@@ -25,21 +23,30 @@ def average_white(image):
 
     return image
 
-perspective = [
-    (0, image.shape[0]),
-    (image.shape[1]/3, image.shape[0]/2),
-    (image.shape[1]/3*2, image.shape[0]/2),
-    (image.shape[1], image.shape[0])
-]
+def get_perspective(image):
+    return [
+        (0, image.shape[0]),
+        (int(2*image.shape[1]/5), int(image.shape[0]/2 + image.shape[0]/15)),
+        (int(image.shape[1]-2*image.shape[1]/5), int(image.shape[0]/2 + image.shape[0]/15)),
+        (image.shape[1], image.shape[0])
+    ]
 
 def get_pers_mat(image):
+    perspective = get_perspective(image)
     # perspective warp the sat_bin image
     pers_mat = cv2.getPerspectiveTransform(np.float32(perspective), np.float32([[0, image.shape[0]], [0, 0], [image.shape[1], 0], [image.shape[1], image.shape[0]]]))
     return pers_mat
 
 def primary_crop(image):
+    # perspective = [
+    #     (0, image.shape[0]),
+    #     (image.shape[1]/4, image.shape[0]/2),
+    #     (image.shape[1]-image.shape[1]/4, image.shape[0]/2),
+    #     (image.shape[1], image.shape[0])
+    # ]
     # crop the image to the perspective
-    pers_mat = cv2.getPerspectiveTransform(np.float32(perspective), np.float32([[0, image.shape[0]], [0, 0], [image.shape[1], 0], [image.shape[1], image.shape[0]]]))
+    # pers_mat = cv2.getPerspectiveTransform(np.float32(perspective), np.float32([[0, image.shape[0]], [0, 0], [image.shape[1], 0], [image.shape[1], image.shape[0]]]))
+    pers_mat = get_pers_mat(image)
     warped = cv2.warpPerspective(image, pers_mat, (image.shape[1], image.shape[0]))
 
     return warped
@@ -83,6 +90,48 @@ def angle_clean(image, incriment, draw=False):
     
     return distances, angles, ray_image
 
+def center_clean(image, incriment, draw=False):
+    lane_origin = (image.shape[1]//2, image.shape[0]//2)
+
+    ray_image = np.zeros_like(image)
+
+    angle = 0
+    distances = []
+    angles = []
+    while angle < 360:
+        # get the first white pixel in the image closest to the origin
+
+        max_x = int(lane_origin[0] + (image.shape[1]//2) * np.cos(np.deg2rad(angle)))
+        max_y = int(lane_origin[1] - (image.shape[0]//2) * np.sin(np.deg2rad(angle)))
+
+        line_length = int(np.sqrt((max_x - lane_origin[0])**2 + (max_y - lane_origin[1])**2))
+
+        for i in range(line_length):
+            x = int(lane_origin[0] + i * np.cos(np.deg2rad(angle)))
+            y = int(lane_origin[1] - i * np.sin(np.deg2rad(angle)))
+
+            try:
+                if image[y, x] == 1:
+                    ray_image[y, x] = 1
+                    if draw == True:
+                        cv2.line(ray_image, lane_origin, (x, y-1), (255, 0, 0), 1)
+                    distances.append(i)
+                    break
+            except:
+                pass
+
+        angles.append(angle)
+        if len(distances) < 1:
+            distances.append(0)
+        if len(distances) < len(angles):
+            # append the previous distance
+            distances.append(distances[-1])
+
+        # increment the angle
+        angle += incriment
+    
+    return distances, angles, ray_image
+
 def clean(image):
 
     # get pixel clump sizes
@@ -90,34 +139,21 @@ def clean(image):
 
     # if the number of pixels in a clump is less than 5 then remove it
     min_thresh = 15
-    max_thresh = 5000
+    max_thresh = 20000
     for i in range(1, pixel_clumps[0]):
         if pixel_clumps[2][i][4] < min_thresh:
             image[pixel_clumps[1] == i] = 0
         elif pixel_clumps[2][i][4] > max_thresh:
             image[pixel_clumps[1] == i] = 0
-            
-    # try to determine a good Region of Interest that only contains the lane (there is other stuff in the image)
-    # the lane will always origionate from the bottom middle of the image
-    lane_origin = (image.shape[1]//2, image.shape[0])
 
-    # ray case from the origin to the top of the image and find the first pixel that is white
-    # do this for the left and right sides of the image
-    # the left and right sides of the image will be the left and right edges of the lane
+    distances, angles, ray_image = angle_clean(image, 0.1, False)
 
-    # create a new image with the same dimensions as the original image
-    # this image will be used to draw the ray cases
-    # ray_image = np.zeros_like(image)
+    distances, angles, ray_image = center_clean(ray_image, 0.1, False)
 
-    # draw the ray cases from the origin out to the sides of the image
-    # shoot a ray going up from the origin in a circle around the image
+    # plt.imshow(ray_image, cmap='gray')
+    # plt.show()
 
-    # the ray case will be a line that is 1 pixel thick
-    # the line will be drawn in white
-    # the line will be drawn from the origin to the first white pixel in the image
-    # the line will be drawn in the ray_image
-
-    distances, angles, ray_image = angle_clean(image, 0.2, False)
+    return ray_image
 
     # avg_x = np.mean(np.where(ray_image == 1)[1])
     # avg_y = np.mean(np.where(ray_image == 1)[0])
@@ -166,10 +202,21 @@ def clean(image):
     # plt.imshow(ray_image, cmap='gray')
     # plt.show()
 
-    # save ray_image to out.mp4
-    out.write(ray_image)
+    # save ray_image to the output folder
+    # convert ray_image to a format that can be saved
+    ray_image = np.uint8(ray_image * 255)
+    # save the image with the date in the name
+    # cv2.imwrite('output/ray_image_{}.png'.format(
+        # datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')), ray_image)
 
-    # return warped_image
+    # save warped_image to the output folder
+    # convert warped_image to a format that can be saved
+    warped_image = np.uint8(warped_image * 255)
+    # save the image with the date in the name
+    # cv2.imwrite('output/warped_image_{}.png'.format(
+        # datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')), warped_image)
+
+    # return ray_image
 
     # plt.imshow(image, cmap='gray')
     # plt.show()
@@ -178,25 +225,27 @@ def clean(image):
 # plt.show()
 
 # loop through every frame in in.mp4
-cap = cv2.VideoCapture('inhigh.mp4')
-i = 0
-while(cap.isOpened()):
-    ret, frame = cap.read()
-    print(i)
+# cap = cv2.VideoCapture('inhigh.mp4')
+# i = 0
+# # while(cap.isOpened()):
+# while i < 1:
+#     ret, frame = cap.read()
+#     print(i)
 
-    # convert frame to 300 pixels high (maintain aspect ratio) use cv2
-    height = 300
-    height_diff = frame.shape[0]/height
-    width = int(frame.shape[1]/height_diff)
-    frame = cv2.resize(frame, (width, height))
+#     # convert frame to 300 pixels high (maintain aspect ratio) use cv2
+#     height = 300
+#     height_diff = frame.shape[0]/height
+#     width = int(frame.shape[1]/height_diff)
+#     frame = cv2.resize(frame, (width, height))
 
-    hls_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2HLS)
+#     hls_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2HLS)
 
-    sat_frame = hls_frame[:,:,2]
-    sat_bin_frame = np.zeros_like(sat_frame)
-    sat_bin_frame[(sat_frame > sat_thres)] = 1
+#     sat_frame = hls_frame[:,:,2]
+#     sat_bin_frame = np.zeros_like(sat_frame)
+#     sat_bin_frame[(sat_frame > 80)] = 1
 
-    clean(sat_bin_frame)
-    i+= 1
+#     clean(sat_bin_frame)
+#     plt.pause(0.01)
+#     i+= 1
 
     

@@ -16,36 +16,17 @@ def start_convert(image):
     sat_bin = np.zeros_like(sat)
     sat_bin[(sat > sat_thres)] = 1
 
+    # plt.subplot(1, 2, 1)
+    # plt.imshow(sat_bin, cmap='gray')
+
+    sat_bin = image_cleaner.clean(sat_bin)
+
+    # plt.subplot(1, 2, 2)
     # plt.imshow(sat_bin, cmap='gray')
     # plt.show()
 
-    # TODO: remove noise from the image by using red thresholding and channel comparison
-    warped = image_cleaner.clean(sat_bin)
-
-    width = sat_bin.shape[1]
-    height = sat_bin.shape[0]
-    # perspective = [
-    #     (0, height),
-    #     (281, 182),
-    #     (362, 180),
-    #     (width, height)
-    # ]
-
-    def draw_roi(img, vertices):
-        roi = np.copy(img)
-        match_mask_color = 255
-        cv2.fillPoly(roi, vertices, match_mask_color)
-        return roi
-
-    # roi = draw_roi(lane_image, np.array([perspective], np.int32))
-
-    # cv2.imshow('result', roi)
-    # cv2.waitKey(0)
-
-    # perspective warp the sat_bin image
-    # pers_mat = cv2.getPerspectiveTransform(np.float32(perspective), np.float32([[0, height], [0, 0], [width, 0], [width, height]]))
+    warped = image_cleaner.primary_crop(sat_bin)
     pers_mat = image_cleaner.get_pers_mat(sat_bin)
-    # warped = cv2.warpPerspective(sat_bin, pers_mat, (width, height))
 
     # plt.imshow(warped, cmap='gray')
     # plt.show()
@@ -65,7 +46,7 @@ def start_convert(image):
     histogram = calculate_histogram(warped)
 
     # plot image and histogram side-by-side
-    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20,8))
+    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18,8))
     # ax1.imshow(warped, cmap='gray')
     # ax1.set_title('Warped Image')
     # ax2.plot(histogram)
@@ -103,16 +84,28 @@ def start_convert(image):
                     break
             lanes.append((start, end))
 
-    min_lane_gap = 30
+    min_lane_gap = 100
 
     # if 2 spikes are within min_lane_gap pixels of each other, combine them
-    for i in range(len(lanes)):
+    i = 0
+    while i < len(lanes) - 1:
         if i == len(lanes) - 1:
             break
         if lanes[i][1] + min_lane_gap >= lanes[i+1][0]:
             lanes[i] = (lanes[i][0], lanes[i+1][1])
             lanes.pop(i+1)
+            i -= 1
+        i += 1
 
+    for lane in lanes:
+        width = lane[1] - lane[0]
+        area = 0
+        for i in range(lane[0], lane[1]):
+            area += histogram[i]
+        # print(area)
+
+        if area < 100:
+            lanes.remove(lane)
     # print(lanes)
 
     # get the center of each lane
@@ -181,17 +174,41 @@ def start_convert(image):
             for b in all_points_lanes[a].tolist()[0][::-1]:
                 all_points.append(b)
 
-    print(all_points)
+    # print(all_points)
 
     cv2.fillPoly(lane_image, np.array([all_points], np.int32), (0, 255, 0))
 
     # make the fill 50% transparent
     lane_image = cv2.addWeighted(lane_image, 0.5, image, 0.5, 0)
 
+    # draw the lines in blue
+    for lane in all_points_lanes:
+        cv2.polylines(lane_image, lane, False, (255, 0, 0), 2)
+
 
     rgb_lane_image = cv2.cvtColor(lane_image, cv2.COLOR_BGR2RGB)
 
-    # plt.imshow(rgb_lane_image)
-    # plt.show()
+    plt.imshow(rgb_lane_image)
+    plt.show()
 
-start_convert('lane.jpg')
+# image = cv2.imread('lane.jpg')
+# start_convert(image)
+
+plt.show()
+
+cap = cv2.VideoCapture('inhigh.mp4')
+i = 0
+# while(cap.isOpened()):
+while i < 1:
+    ret, frame = cap.read()
+    print(i)
+
+    # height = 300
+    height = 500
+    height_diff = frame.shape[0]/height
+    width = int(frame.shape[1]/height_diff)
+    frame = cv2.resize(frame, (width, height))
+
+    start_convert(frame)
+    plt.pause(0.02)
+    i+= 1
