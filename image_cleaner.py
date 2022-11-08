@@ -136,7 +136,8 @@ def clean(image):
 
     distances, angles, ray_image = angle_clean(image, 0.1, False)
 
-    distances, angles, ray_image = center_clean(ray_image, 0.1, False)
+    if config['CLEANING']['Run_Center_Rays'] == 'True':
+        distances, angles, ray_image = center_clean(ray_image, 0.1, False)
 
     return ray_image
 

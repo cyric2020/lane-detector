@@ -23,11 +23,13 @@ There is a configuration file provided `config.ini` that contains editable param
 Sat_Thresh = 80
 Angle_Increment = 0.1
 Mid_Redux = 15
+Run_Center_Rays = True
 ```
 
 - `Sat_Thresh` is the threshold for the minimum saturation of the image. This is used to detect the white lines on the road.
 - `Angle_Increment` is the increment of the angle used in the ray casting algorithm.
 - `Mid_Redux` is the reduction from the horixontal middle of the ROI, this can be modified to remove less of the environment. $\frac{1}{Mid\_Redux}$
+- `Run_Center_Rays` is a boolean that determines if the center rays should be run. This can be set to false if the `Angle_Increment` is too large.
 
 ## Lane Detection Pipeline
 
@@ -151,8 +153,16 @@ The gif below shows the lane detection system in action. There are many flaws in
 
 ### Average FPS
 
-| Resolution | Time (S)  | FPS         |
-|------------|-----------|-------------|
-| 600x338    | 8.578125  | 0.116575592 |
-| 300x169    | 4.46875   | 0.223776224 |
-| 100x56     | 1.625     | 0.615384615 |
+| Resolution | Time (S)  | FPS         | Angle Increment (Deg) | Run Center Rays |
+|------------|-----------|-------------|-----------------------|-----------------|
+| 600x338    | 8.578125  | 0.116575592 | 0.1                   | True            |
+| 300x169    | 4.46875   | 0.223776224 | 0.1                   | True            |
+| 100x56     | 1.625     | 0.615384615 | 0.1                   | True            |
+|
+| 600x338    | 3.734375  | 0.267782427 | 0.2                   | True            |
+| 300x169    | 1.78125   | 0.561403509 | 0.2                   | True            |
+| 100x56     | 0.6875    | 1.454545455 | 0.2                   | True            |
+|
+| 600x338    | 0.9375    | 1.06666667  | 0.5                   | False           |
+| 300x169    | 0.3125    | 3.2         | 0.5                   | False           |
+| 100x56     | 0.125     | 8           | 0.5                   | False           |
